@@ -15,8 +15,14 @@ import (
 // ИНСТРУМЕНТЫ — то, что агент умеет делать
 // ─────────────────────────────────────────────
 
+// ToolResult — результат выполнения инструмента с флагом ошибки.
+type ToolResult struct {
+	Output  string
+	IsError bool
+}
+
 // ExecuteTool запускает инструмент по имени
-func ExecuteTool(name string, args map[string]interface{}) string {
+func ExecuteTool(name string, args map[string]interface{}) ToolResult {
 	if args == nil {
 		args = map[string]interface{}{}
 	}
@@ -24,19 +30,19 @@ func ExecuteTool(name string, args map[string]interface{}) string {
 	case "run_command":
 		cmd, _ := args["command"].(string)
 		if cmd == "" {
-			return "❌ Ошибка: не указана команда (command)"
+			return ToolResult{Output: "❌ Ошибка: не указана команда (command)", IsError: true}
 		}
 		return toolRunCommand(cmd)
 	case "read_file":
 		path, ok := args["path"].(string)
 		if !ok || path == "" {
-			return "❌ Ошибка: не указан путь файла (path)"
+			return ToolResult{Output: "❌ Ошибка: не указан путь файла (path)", IsError: true}
 		}
 		return toolReadFile(path)
 	case "write_file":
 		path, ok := args["path"].(string)
 		if !ok || path == "" {
-			return "❌ Ошибка: не указан путь файла (path)"
+			return ToolResult{Output: "❌ Ошибка: не указан путь файла (path)", IsError: true}
 		}
 		content, _ := args["content"].(string)
 		return toolWriteFile(path, content)
@@ -47,11 +53,11 @@ func ExecuteTool(name string, args map[string]interface{}) string {
 		}
 		return toolListFiles(dir)
 	default:
-		return fmt.Sprintf("❌ Неизвестный инструмент: %s", name)
+		return ToolResult{Output: fmt.Sprintf("❌ Неизвестный инструмент: %s", name), IsError: true}
 	}
 }
 
-func toolRunCommand(command string) string {
+func toolRunCommand(command string) ToolResult {
 	fmt.Printf("  🔧 Выполняю: %s\n", command)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -61,54 +67,57 @@ func toolRunCommand(command string) string {
 	output, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		return "⏰ Команда превысила таймаут (30 сек)"
+		return ToolResult{Output: "⏰ Команда превысила таймаут (30 сек)", IsError: true}
 	}
 
 	result := strings.TrimSpace(string(output))
 	if err != nil && result == "" {
-		return fmt.Sprintf("❌ Ошибка: %v", err)
+		return ToolResult{Output: fmt.Sprintf("❌ Ошибка: %v", err), IsError: true}
+	}
+	if err != nil {
+		return ToolResult{Output: result, IsError: true}
 	}
 	if result == "" {
-		return "(команда выполнена, вывод пуст)"
+		return ToolResult{Output: "(команда выполнена, вывод пуст)", IsError: false}
 	}
-	return result
+	return ToolResult{Output: result, IsError: false}
 }
 
-func toolReadFile(path string) string {
+func toolReadFile(path string) ToolResult {
 	fmt.Printf("  📖 Читаю файл: %s\n", path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Sprintf("❌ Ошибка чтения: %v", err)
+		return ToolResult{Output: fmt.Sprintf("❌ Ошибка чтения: %v", err), IsError: true}
 	}
 
 	content := string(data)
 	if len(content) > 10000 {
-		return content[:10000] + fmt.Sprintf("\n... (файл обрезан, всего %d символов)", len(content))
+		content = content[:10000] + fmt.Sprintf("\n... (файл обрезан, всего %d символов)", len(content))
 	}
-	return content
+	return ToolResult{Output: content, IsError: false}
 }
 
-func toolWriteFile(path, content string) string {
+func toolWriteFile(path, content string) ToolResult {
 	fmt.Printf("  ✏️  Пишу файл: %s\n", path)
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Sprintf("❌ Ошибка создания директории: %v", err)
+		return ToolResult{Output: fmt.Sprintf("❌ Ошибка создания директории: %v", err), IsError: true}
 	}
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Sprintf("❌ Ошибка записи: %v", err)
+		return ToolResult{Output: fmt.Sprintf("❌ Ошибка записи: %v", err), IsError: true}
 	}
-	return fmt.Sprintf("✅ Файл записан: %s (%d символов)", path, len(content))
+	return ToolResult{Output: fmt.Sprintf("✅ Файл записан: %s (%d символов)", path, len(content)), IsError: false}
 }
 
-func toolListFiles(directory string) string {
+func toolListFiles(directory string) ToolResult {
 	fmt.Printf("  📁 Содержимое: %s\n", directory)
 
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return fmt.Sprintf("❌ Ошибка: %v", err)
+		return ToolResult{Output: fmt.Sprintf("❌ Ошибка: %v", err), IsError: true}
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
@@ -130,9 +139,34 @@ func toolListFiles(directory string) string {
 	}
 
 	if len(lines) == 0 {
-		return "(пусто)"
+		return ToolResult{Output: "(пусто)", IsError: false}
 	}
-	return strings.Join(lines, "\n")
+	return ToolResult{Output: strings.Join(lines, "\n"), IsError: false}
+}
+
+// ValidateToolResult проверяет результат tool call по эвристикам.
+// Не меняет Output — только ставит флаг IsError.
+func ValidateToolResult(toolName string, result ToolResult) ToolResult {
+	if result.IsError {
+		return result
+	}
+
+	if toolName == "run_command" {
+		lower := strings.ToLower(result.Output)
+		errorPatterns := []string{
+			"permission denied",
+			"command not found",
+			"no such file or directory",
+		}
+		for _, pattern := range errorPatterns {
+			if strings.Contains(lower, pattern) {
+				result.IsError = true
+				return result
+			}
+		}
+	}
+
+	return result
 }
 
 // GetToolNames возвращает имена всех зарегистрированных инструментов

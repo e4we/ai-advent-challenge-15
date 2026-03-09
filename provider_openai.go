@@ -279,14 +279,18 @@ func tryParseToolFromText(text string) []ToolCall {
 	}}
 }
 
-func (p *OpenAIProvider) FormatToolResult(toolCallID, result string) Message {
+func (p *OpenAIProvider) FormatToolResult(toolCallID string, result ToolResult) Message {
+	output := result.Output
+	if result.IsError {
+		output = "[ERROR] " + output
+	}
 	return Message{
 		Role: "user",
 		Content: []ContentBlock{
 			{
 				Type:      "tool_result",
 				ToolUseID: toolCallID,
-				Content:   result,
+				Content:   output,
 			},
 		},
 	}

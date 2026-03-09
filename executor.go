@@ -19,7 +19,7 @@ import (
 // ExecHooks — callback'и для наблюдателей.
 type ExecHooks struct {
 	OnLLMResponse func(text string, toolCalls []ToolCall)
-	OnToolResult  func(call ToolCall, result string)
+	OnToolResult  func(call ToolCall, result ToolResult)
 	OnNoToolCalls func(text string) string // непустая строка = напоминание
 	OnPause       func(iteration int)
 	OnComplete    func()
@@ -84,6 +84,7 @@ func Execute(task *Task, provider Provider, hooks ExecHooks) {
 		// ── Выполняем инструменты ──
 		for _, tc := range response.ToolCalls {
 			result := ExecuteTool(tc.Name, tc.Arguments)
+			result = ValidateToolResult(tc.Name, result)
 
 			if hooks.OnToolResult != nil {
 				hooks.OnToolResult(tc, result)
@@ -146,13 +147,17 @@ func DefaultHooks() ExecHooks {
 				fmt.Printf("\n🤖 %s\n", text)
 			}
 		},
-		OnToolResult: func(call ToolCall, result string) {
+		OnToolResult: func(call ToolCall, result ToolResult) {
 			fmt.Printf("\n  🔨 Инструмент: %s\n", call.Name)
-			display := result
+			display := result.Output
 			if len(display) > 200 {
 				display = display[:200] + "..."
 			}
-			fmt.Printf("  📋 Результат: %s\n", display)
+			if result.IsError {
+				fmt.Printf("  ⚠️  Результат (ошибка): %s\n", display)
+			} else {
+				fmt.Printf("  📋 Результат: %s\n", display)
+			}
 		},
 		OnError: func(err error) {
 			fmt.Printf("\n❌ Ошибка API: %v\n", err)
@@ -177,13 +182,17 @@ func TrackedHooks(tracker *PlanTracker, maxReminders int) ExecHooks {
 				}
 			}
 		},
-		OnToolResult: func(call ToolCall, result string) {
+		OnToolResult: func(call ToolCall, result ToolResult) {
 			fmt.Printf("\n  🔨 Инструмент: %s\n", call.Name)
-			display := result
+			display := result.Output
 			if len(display) > 200 {
 				display = display[:200] + "..."
 			}
-			fmt.Printf("  📋 Результат: %s\n", display)
+			if result.IsError {
+				fmt.Printf("  ⚠️  Результат (ошибка): %s\n", display)
+			} else {
+				fmt.Printf("  📋 Результат: %s\n", display)
+			}
 		},
 		OnNoToolCalls: func(text string) string {
 			if !tracker.AllDone() && reminders < maxReminders {

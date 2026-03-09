@@ -70,7 +70,7 @@ type ToolCall struct {
 // Интерфейс провайдера — все провайдеры реализуют его
 type Provider interface {
 	Chat(messages []Message) (*LLMResponse, error)
-	FormatToolResult(toolCallID, result string) Message
+	FormatToolResult(toolCallID string, result ToolResult) Message
 	FormatAssistantMessage(resp *LLMResponse) Message
 }
 
@@ -124,4 +124,5 @@ type ContentBlock struct {
 	Input     map[string]interface{} `json:"input,omitempty"`
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
 	Content   string                 `json:"content,omitempty"`
+	IsError   bool                   `json:"is_error,omitempty"`
 }

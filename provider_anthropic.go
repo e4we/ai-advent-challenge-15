@@ -146,14 +146,15 @@ func (p *AnthropicProvider) Chat(messages []Message) (*LLMResponse, error) {
 	return result, nil
 }
 
-func (p *AnthropicProvider) FormatToolResult(toolCallID, result string) Message {
+func (p *AnthropicProvider) FormatToolResult(toolCallID string, result ToolResult) Message {
 	return Message{
 		Role: "user",
 		Content: []ContentBlock{
 			{
 				Type:      "tool_result",
 				ToolUseID: toolCallID,
-				Content:   result,
+				Content:   result.Output,
+				IsError:   result.IsError,
 			},
 		},
 	}
