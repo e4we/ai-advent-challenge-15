@@ -18,13 +18,14 @@ import (
 
 // ExecHooks — callback'и для наблюдателей.
 type ExecHooks struct {
-	OnLLMResponse func(text string, toolCalls []ToolCall)
-	OnToolResult  func(call ToolCall, result ToolResult)
-	OnNoToolCalls func(text string) string // непустая строка = напоминание
-	OnPause       func(iteration int)
-	OnComplete    func()
-	OnError       func(err error)
-	ShouldStop    func() bool
+	OnLLMResponse   func(text string, toolCalls []ToolCall)
+	OnToolResult    func(call ToolCall, result ToolResult)
+	AfterToolResult func(call ToolCall, result ToolResult) *ToolResult // не-nil → добавить как user-сообщение
+	OnNoToolCalls   func(text string) string                          // непустая строка = напоминание
+	OnPause         func(iteration int)
+	OnComplete      func()
+	OnError         func(err error)
+	ShouldStop      func() bool
 }
 
 // Execute — основной цикл. Работает с Task.
@@ -91,6 +92,19 @@ func Execute(task *Task, provider Provider, hooks ExecHooks) {
 			}
 
 			task.Messages = append(task.Messages, provider.FormatToolResult(tc.ID, result))
+
+			// Автотест
+			if hooks.AfterToolResult != nil {
+				if autoResult := hooks.AfterToolResult(tc, result); autoResult != nil {
+					var msg string
+					if autoResult.IsError {
+						msg = fmt.Sprintf("[AUTOTEST FAILED: %s]\n%s", autoResult.Output, autoResult.Output)
+					} else {
+						msg = fmt.Sprintf("[AUTOTEST OK: %s]", autoResult.Output)
+					}
+					task.Messages = append(task.Messages, Message{Role: "user", Content: msg})
+				}
+			}
 		}
 
 		// Сохраняем после каждой итерации (защита от крэша)
@@ -159,6 +173,7 @@ func DefaultHooks() ExecHooks {
 				fmt.Printf("  📋 Результат: %s\n", display)
 			}
 		},
+		AfterToolResult: autotestHook(),
 		OnError: func(err error) {
 			fmt.Printf("\n❌ Ошибка API: %v\n", err)
 		},
@@ -194,6 +209,7 @@ func TrackedHooks(tracker *PlanTracker, maxReminders int) ExecHooks {
 				fmt.Printf("  📋 Результат: %s\n", display)
 			}
 		},
+		AfterToolResult: autotestHook(),
 		OnNoToolCalls: func(text string) string {
 			if !tracker.AllDone() && reminders < maxReminders {
 				pending := tracker.PendingSteps()
