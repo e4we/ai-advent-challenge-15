@@ -135,6 +135,16 @@ func toolListFiles(directory string) string {
 	return strings.Join(lines, "\n")
 }
 
+// GetToolNames возвращает имена всех зарегистрированных инструментов
+func GetToolNames() []string {
+	schemas := GetToolSchemas()
+	names := make([]string, len(schemas))
+	for i, s := range schemas {
+		names[i] = s.Name
+	}
+	return names
+}
+
 // ─────────────────────────────────────────────
 // Описания инструментов для LLM (JSON Schema)
 // ─────────────────────────────────────────────

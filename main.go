@@ -42,6 +42,7 @@ const planningPrompt = `Ты — CLI-агент в режиме ПЛАНИРОВ
     {
       "number": 1,
       "action": "Что конкретно сделать",
+      "tool": "имя_инструмента",
       "reason": "Зачем это нужно"
     }
   ],
@@ -50,6 +51,7 @@ const planningPrompt = `Ты — CLI-агент в режиме ПЛАНИРОВ
 
 Правила:
 - Каждый шаг = одно конкретное действие
+- В поле tool указывай один из доступных инструментов: run_command, read_file, write_file, list_files. Если шаг не требует инструмента — оставь поле пустым.
 - Шаги идут в логическом порядке
 - Простая задача = 1-2 шага, сложная = до 10
 - Начинай с изучения проекта (list_files, read_file), если нужен контекст
@@ -86,6 +88,7 @@ type PlanStep struct {
 	Number int    `json:"number"`
 	Action string `json:"action"`
 	Reason string `json:"reason"`
+	Tool   string `json:"tool,omitempty"`
 	Status string `json:"status,omitempty"` // "pending", "done", "skipped"
 }
 
@@ -290,6 +293,7 @@ func stepCheck(iteration int) string {
 // Обновляет task.State через конечный автомат.
 func doPlan(task *Task, provider Provider) {
 	currentInput := task.Input
+	retries := 0
 
 	for {
 		// State: plan → составляем план
@@ -322,6 +326,20 @@ func doPlan(task *Task, provider Provider) {
 				task.Save()
 			}
 			return
+		}
+
+		// Валидация структуры плана
+		validationErrors := validatePlan(plan)
+		if len(validationErrors) > 0 && retries < 1 {
+			retries++
+			fmt.Println("⚠️  План содержит ошибки, перегенерирую...")
+			currentInput = task.Input + "\n\nПредыдущий план содержит ошибки:\n" + strings.Join(validationErrors, "\n") + "\nИсправь план."
+			continue
+		}
+		if len(validationErrors) > 0 {
+			printPlanWarnings(validationErrors)
+		} else {
+			fmt.Println("✅ План прошёл валидацию")
 		}
 
 		task.Plan = plan
@@ -450,13 +468,62 @@ func parsePlan(text string) *Plan {
 	return &plan
 }
 
+func validatePlan(plan *Plan) []string {
+	var errs []string
+
+	if plan.Summary == "" {
+		errs = append(errs, "summary пустой")
+	}
+	if len(plan.Steps) == 0 {
+		errs = append(errs, "нет шагов")
+	}
+	if len(plan.Steps) > 15 {
+		errs = append(errs, fmt.Sprintf("слишком много шагов: %d (макс 15)", len(plan.Steps)))
+	}
+
+	toolNames := GetToolNames()
+	toolSet := make(map[string]bool, len(toolNames))
+	for _, name := range toolNames {
+		toolSet[name] = true
+	}
+
+	seenNumbers := make(map[int]bool)
+	for _, step := range plan.Steps {
+		if step.Action == "" {
+			errs = append(errs, fmt.Sprintf("шаг %d: пустой action", step.Number))
+		}
+		if seenNumbers[step.Number] {
+			errs = append(errs, fmt.Sprintf("шаг %d: дублирующийся номер", step.Number))
+		}
+		seenNumbers[step.Number] = true
+
+		if step.Tool != "" && !toolSet[step.Tool] {
+			errs = append(errs, fmt.Sprintf("шаг %d: инструмент %q не существует (доступны: %s)",
+				step.Number, step.Tool, strings.Join(toolNames, ", ")))
+		}
+	}
+
+	return errs
+}
+
+func printPlanWarnings(errs []string) {
+	fmt.Println("\n⚠️  Проблемы плана:")
+	for _, e := range errs {
+		fmt.Printf("  • %s\n", e)
+	}
+}
+
 func printPlan(plan *Plan) {
 	fmt.Printf("\n╔══ 📋 ПЛАН ══════════════════════════════════╗\n")
 	fmt.Printf("║  %s\n", plan.Summary)
 	fmt.Printf("╠══════════════════════════════════════════════╣\n")
 
 	for _, step := range plan.Steps {
-		fmt.Printf("║  %d. %s\n", step.Number, step.Action)
+		if step.Tool != "" {
+			fmt.Printf("║  %d. [%s] %s\n", step.Number, step.Tool, step.Action)
+		} else {
+			fmt.Printf("║  %d. %s\n", step.Number, step.Action)
+		}
 		if step.Reason != "" {
 			fmt.Printf("║     └─ %s\n", step.Reason)
 		}
